@@ -27,21 +27,20 @@ console.log("Server is starting...");
 
 const server = net.createServer((socket) => {
     // Listen for data from the client
-    socket.on('data', (data) => {
-        console.log('Received data:', data.toString());
 
-        // Write a simple HTTP 200 response
-        const response = 'HTTP/1.1 200 OK\r\n' +
-                         'Content-Length: 13\r\n' +
-                         'Content-Type: text/plain\r\n\r\n' +
-                         'Hello, World!';
-        
-        // Send the HTTP response to the client
-        socket.write(response);
-        
-        // Close the socket after sending the response
+    socket.on('data', (data) => {
+        const request = data.toString();
+        if (request.startsWith('GET / ')) {
+          
+            const httpResponse = 'HTTP/1.1 200 OK\r\n\r\n';
+            socket.write(httpResponse);
+        } else {
+          const httpResponse = 'HTTP/1.1 404 NOT FOUND\r\n\r\n';
+            socket.write(httpResponse);
+        }
         socket.end();
     });
+
 
     // Handle socket errors
     socket.on('error', (err) => {
