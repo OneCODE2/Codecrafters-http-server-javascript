@@ -1,43 +1,42 @@
-const net = require('net');
-
-// Logs from your program will appear here!
-console.log("Server is starting...");
+const net = require("net");
 
 const server = net.createServer((socket) => {
-    // Listen for data from the client
-    socket.on('data', (data) => {
+    // Handle incoming data
+    socket.on("data", (data) => {
         const request = data.toString();
-        console.log('Received request:', request);
+        console.log("Request: \n" + request);
 
-        if (request.startsWith('GET / ')) {
-            // Respond to root path with 200 OK
-            const httpResponse = 'HTTP/1.1 200 OK\r\n\r\n';
-            socket.write(httpResponse);
-        } else if (request.startsWith('GET /echo/')) {
-            // Extract the string from the /echo/ endpoint
-            const content = request.split(' ')[1].split('/echo/')[1].split(' ')[0];
-            const contentLength = Buffer.byteLength(content);
+        // Parse URL and headers
+        const lines = request.split('\r\n');
+        const url = lines[0].split(' ')[1]; // First line contains the URL
+        const headers = lines.slice(1, -2); // Extract headers excluding request line and empty line
 
-            // Respond to /echo/{str} with 200 OK and the string
-            const httpResponse = `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${contentLength}\r\n\r\n${content}`;
-            socket.write(httpResponse);
+        // Handle different endpoints
+        if (url === "/") {
+            socket.write("HTTP/1.1 200 OK\r\n\r\n");
+        } else if (url.startsWith("/echo/")) {
+            const content = url.split('/echo/')[1];
+            socket.write(`HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${content.length}\r\n\r\n${content}`);
+        } else if (url === "/user-agent") {
+            // Find User-Agent header
+            const userAgentHeader = headers.find(header => header.startsWith('User-Agent: '));
+            const userAgent = userAgentHeader ? userAgentHeader.split('User-Agent: ')[1] : '';
+            socket.write(`HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${userAgent.length}\r\n\r\n${userAgent}`);
         } else {
-            // Respond with 404 Not Found for any other requests
-            const httpResponse = 'HTTP/1.1 404 Not Found\r\n\r\n';
-            socket.write(httpResponse);
+            socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
         }
-        
-        // Close the socket after sending the response
+
+        // Close the connection after responding
         socket.end();
     });
 
     // Handle socket errors
-    socket.on('error', (err) => {
-        console.error('Socket error:', err);
+    socket.on("error", (err) => {
+        console.error("Socket error:", err);
     });
 });
 
 // Start the server and listen on port 4221
-server.listen(4221, 'localhost', () => {
+server.listen(4221, "localhost", () => {
     console.log("Server is listening on port 4221");
 });
