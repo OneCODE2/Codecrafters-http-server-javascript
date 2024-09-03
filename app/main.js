@@ -84,55 +84,53 @@
 
 
 const net = require("net");
-const fs = require("fs").promises;
+const fs = require("fs");
 const path = require("path");
-const zlib = require("zlib");
 
 const PORT = 4221;
-const FILE_DIRECTORY = process.argv[3] || "./files";
+const FILE_DIRECTORY = process.argv[3];
 
 const server = net.createServer((socket) => {
   socket.on("data", (data) => handleRequest(socket, data));
 });
 
-server.listen(PORT, "localhost", () => {
-  console.log(`Server listening on port ${PORT}`);
-});
+server.listen(PORT, "localhost");
 
-async function handleRequest(socket, data) {
+function handleRequest(socket, data) {
   const request = parseRequest(data);
 
-  try {
-    if (request.path === "/") {
-      sendResponse(socket, 200);
-    } else if (request.path.startsWith("/echo/")) {
-      const message = request.path.slice(6);
-      const useGzip = request.headers["accept-encoding"]?.includes("gzip");
-      const content = useGzip ? zlib.gzipSync(message) : message;
-      const headers = {
-        "Content-Type": "text/plain",
-        "Content-Length": content.length,
-      };
-      if (useGzip) headers["Content-Encoding"] = "gzip";
-      sendResponse(socket, 200, headers, content);
-    } else if (request.path === "/user-agent") {
-      const userAgent = request.headers["user-agent"] || "";
-      sendResponse(socket, 200, { "Content-Type": "text/plain" }, userAgent);
-    } else if (request.path.startsWith("/files/")) {
-      const filePath = path.join(FILE_DIRECTORY, request.path.slice(7));
-      if (request.method === "GET") {
-        const content = await fs.readFile(filePath);
-        sendResponse(socket, 200, { "Content-Type": "application/octet-stream" }, content);
-      } else if (request.method === "POST") {
-        await fs.writeFile(filePath, request.body);
-        sendResponse(socket, 201);
+  if (request.path === "/") {
+    sendResponse(socket, 200);
+  } else if (request.path.startsWith("/echo/")) {
+    const message = request.path.slice(6);
+    sendResponse(socket, 200, { 
+      "Content-Type": "text/plain",
+      "Content-Length": Buffer.byteLength(message)
+    }, message);
+  } else if (request.path === "/user-agent") {
+    const userAgent = request.headers["user-agent"] || "";
+    sendResponse(socket, 200, { 
+      "Content-Type": "text/plain",
+      "Content-Length": Buffer.byteLength(userAgent)
+    }, userAgent);
+  } else if (request.path.startsWith("/files/")) {
+    const filePath = path.join(FILE_DIRECTORY, request.path.slice(7));
+    if (request.method === "GET") {
+      if (fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath);
+        sendResponse(socket, 200, { 
+          "Content-Type": "application/octet-stream",
+          "Content-Length": content.length
+        }, content);
+      } else {
+        sendResponse(socket, 404);
       }
-    } else {
-      sendResponse(socket, 404);
+    } else if (request.method === "POST") {
+      fs.writeFileSync(filePath, request.body);
+      sendResponse(socket, 201);
     }
-  } catch (error) {
-    console.error("Error handling request:", error);
-    sendResponse(socket, 500, {}, "Internal Server Error");
+  } else {
+    sendResponse(socket, 404);
   }
 }
 
@@ -166,16 +164,11 @@ function sendResponse(socket, statusCode, headers = {}, body = "") {
     response += `${key}: ${value}\r\n`;
   }
   
-  if (!headers["Content-Length"] && body) {
-    response += `Content-Length: ${Buffer.byteLength(body)}\r\n`;
-  }
-  
   response += "\r\n";
 
-  if (body) {
-    response += body;
-  }
-
   socket.write(response);
+  if (body) {
+    socket.write(body);
+  }
   socket.end();
 }
