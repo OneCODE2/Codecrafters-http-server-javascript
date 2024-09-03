@@ -86,6 +86,7 @@
 const net = require("net");
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
 
 const PORT = 4221;
 const FILE_DIRECTORY = process.argv[3];
@@ -103,10 +104,26 @@ function handleRequest(socket, data) {
     sendResponse(socket, 200);
   } else if (request.path.startsWith("/echo/")) {
     const message = request.path.slice(6);
-    sendResponse(socket, 200, { 
-      "Content-Type": "text/plain",
-      "Content-Length": Buffer.byteLength(message)
-    }, message);
+    const acceptEncoding = request.headers["accept-encoding"] || "";
+    
+    if (acceptEncoding.includes("gzip")) {
+      zlib.gzip(message, (err, compressed) => {
+        if (err) {
+          sendResponse(socket, 500);
+        } else {
+          sendResponse(socket, 200, {
+            "Content-Type": "text/plain",
+            "Content-Encoding": "gzip",
+            "Content-Length": compressed.length
+          }, compressed);
+        }
+      });
+    } else {
+      sendResponse(socket, 200, {
+        "Content-Type": "text/plain",
+        "Content-Length": Buffer.byteLength(message)
+      }, message);
+    }
   } else if (request.path === "/user-agent") {
     const userAgent = request.headers["user-agent"] || "";
     sendResponse(socket, 200, { 
