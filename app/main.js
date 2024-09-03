@@ -84,105 +84,98 @@
 
 
 const net = require("net");
-const fs = require("fs");
-const zlib = require("zlib"); // Required for gzip compression
+const fs = require("fs").promises;
+const path = require("path");
+const zlib = require("zlib");
 
-console.log("Logs from your program will appear here!");
-
-// Parse the request and headers
-const parseRequest = (requestData) => {
-  const request = requestData.toString().split("\r\n");
-  const [method, path, protocol] = request[0].split(" ");
-  const headers = {};
-  request.slice(1).forEach((header) => {
-    const [key, ...value] = header.split(": ");
-    if (key) {
-      headers[key] = value.join(": ");
-    }
-  });
-  return { method, path, protocol, headers };
-};
-
-const OK_RESPONSE = "HTTP/1.1 200 OK\r\n";
-const ERROR_RESPONSE = "HTTP/1.1 404 Not Found\r\n";
+const PORT = 4221;
+const FILE_DIRECTORY = process.argv[3] || "./files";
 
 const server = net.createServer((socket) => {
-  socket.on("data", (data) => {
-    const request = parseRequest(data);
-    const { method, path, headers } = request;
+  socket.on("data", (data) => handleRequest(socket, data));
+});
 
-    // Determine whether to compress the response
-    const acceptEncoding = headers["Accept-Encoding"] || "";
-    const isGzipRequested = acceptEncoding.includes("gzip");
-    let responseHeaders = OK_RESPONSE;
+server.listen(PORT, "localhost", () => {
+  console.log(`Server listening on port ${PORT}`);
+});
 
-    if (path === "/") {
-      socket.write(responseHeaders + "\r\n");
-    } else if (path.startsWith("/echo")) {
-      const responseBody = path.substring(6);
-      responseHeaders += "Content-Type: text/plain\r\n";
-      responseHeaders += `Content-Length: ${responseBody.length}\r\n`;
+async function handleRequest(socket, data) {
+  const request = parseRequest(data);
 
-      if (isGzipRequested) {
-        // Simulate gzip compression by including Content-Encoding header
-        responseHeaders += "Content-Encoding: gzip\r\n";
+  try {
+    if (request.path === "/") {
+      sendResponse(socket, 200);
+    } else if (request.path.startsWith("/echo/")) {
+      const message = request.path.slice(6);
+      const useGzip = request.headers["accept-encoding"]?.includes("gzip");
+      const content = useGzip ? zlib.gzipSync(message) : message;
+      const headers = {
+        "Content-Type": "text/plain",
+        "Content-Length": content.length,
+      };
+      if (useGzip) headers["Content-Encoding"] = "gzip";
+      sendResponse(socket, 200, headers, content);
+    } else if (request.path === "/user-agent") {
+      const userAgent = request.headers["user-agent"] || "";
+      sendResponse(socket, 200, { "Content-Type": "text/plain" }, userAgent);
+    } else if (request.path.startsWith("/files/")) {
+      const filePath = path.join(FILE_DIRECTORY, request.path.slice(7));
+      if (request.method === "GET") {
+        const content = await fs.readFile(filePath);
+        sendResponse(socket, 200, { "Content-Type": "application/octet-stream" }, content);
+      } else if (request.method === "POST") {
+        await fs.writeFile(filePath, request.body);
+        sendResponse(socket, 201);
       }
-
-      responseHeaders += "\r\n";
-      socket.write(responseHeaders);
-      socket.write(responseBody);
-    } else if (path.startsWith("/user-agent")) {
-      const userAgent = headers["User-Agent"] || "";
-      responseHeaders += "Content-Type: text/plain\r\n";
-      responseHeaders += `Content-Length: ${userAgent.length}\r\n`;
-
-      if (isGzipRequested) {
-        // Simulate gzip compression by including Content-Encoding header
-        responseHeaders += "Content-Encoding: gzip\r\n";
-      }
-
-      responseHeaders += "\r\n";
-      socket.write(responseHeaders);
-      socket.write(userAgent);
-    } else if (path.startsWith("/files/") && method === "GET") {
-      const fileName = path.replace("/files/", "").trim();
-      const filePath = process.argv[3] + fileName;
-
-      if (fs.existsSync(filePath)) {
-        const content = fs.readFileSync(filePath);
-        responseHeaders += "Content-Type: application/octet-stream\r\n";
-        responseHeaders += `Content-Length: ${content.length}\r\n`;
-
-        if (isGzipRequested) {
-          // Simulate gzip compression by including Content-Encoding header
-          responseHeaders += "Content-Encoding: gzip\r\n";
-        }
-
-        responseHeaders += "\r\n";
-        socket.write(responseHeaders);
-        socket.write(content);
-      } else {
-        socket.write(ERROR_RESPONSE + "\r\n");
-      }
-    } else if (path.startsWith("/files/") && method === "POST") {
-      const filename = process.argv[3] + "/" + path.substring(7);
-      const req = data.toString().split("\r\n");
-      const body = req[req.length - 1];
-      fs.writeFileSync(filename, body);
-      socket.write("HTTP/1.1 201 Created\r\n\r\n");
     } else {
-      socket.write(ERROR_RESPONSE + "\r\n");
+      sendResponse(socket, 404);
     }
+  } catch (error) {
+    console.error("Error handling request:", error);
+    sendResponse(socket, 500, {}, "Internal Server Error");
+  }
+}
 
-    socket.end();
-  });
+function parseRequest(data) {
+  const [requestLine, ...lines] = data.toString().split("\r\n");
+  const [method, path] = requestLine.split(" ");
+  const headers = {};
+  let bodyStart = lines.indexOf("") + 1;
+  
+  for (let i = 0; i < bodyStart - 1; i++) {
+    const [key, value] = lines[i].split(": ");
+    headers[key.toLowerCase()] = value;
+  }
 
-  socket.on("error", (err) => {
-    console.error("Socket error:", err);
-  });
-});
+  const body = lines.slice(bodyStart).join("\r\n");
 
-// Start the server and listen on port 4221
-server.listen(4221, "localhost", () => {
-  console.log("Server is listening on port 4221");
-});
+  return { method, path, headers, body };
+}
+
+function sendResponse(socket, statusCode, headers = {}, body = "") {
+  const statusText = {
+    200: "OK",
+    201: "Created",
+    404: "Not Found",
+    500: "Internal Server Error",
+  }[statusCode];
+
+  let response = `HTTP/1.1 ${statusCode} ${statusText}\r\n`;
+  
+  for (const [key, value] of Object.entries(headers)) {
+    response += `${key}: ${value}\r\n`;
+  }
+  
+  if (!headers["Content-Length"] && body) {
+    response += `Content-Length: ${Buffer.byteLength(body)}\r\n`;
+  }
+  
+  response += "\r\n";
+
+  if (body) {
+    response += body;
+  }
+
+  socket.write(response);
+  socket.end();
+}
